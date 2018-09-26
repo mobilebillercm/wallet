@@ -14,10 +14,10 @@ use Illuminate\Database\Eloquent\Model;
 class MobileBillerCreditAccount extends Model
 {
     protected $table = 'mobilebillercreditaccounts';
-    protected $fillable = ['b_id', 'accountnumber', 'holder', 'balance', 'photo', 'issuer', 'active'];
+    protected $fillable = ['b_id', 'accountnumber', 'holder', 'balance', 'photo', 'issuer', 'active', 'currency'];
 
     public function __construct($b_id = null, $accountnumber = null, $holder = null, $balance = null,
-                                $photo = null, $issuer = null, $active = null,  array $attributes = [])
+                                $photo = null, $issuer = null, $active = null, $currency = null, array $attributes = [])
     {
         parent::__construct($attributes);
         $this->b_id = $b_id;
@@ -27,6 +27,7 @@ class MobileBillerCreditAccount extends Model
         $this->photo = $photo;
         $this->issuer = $issuer;
         $this->active = $active;
+        $this->currency = $currency;
     }
 
     public function makeOperation(TransactionType $transactionType, float $amount){

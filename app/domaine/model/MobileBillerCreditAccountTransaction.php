@@ -17,11 +17,12 @@ class MobileBillerCreditAccountTransaction extends Model
     const FAILED = "FAILED";
     const SUCCESS = "SUCCESS";
     protected $table = 'mobilebillercreditaccounttransactions';
-    protected $fillable = ['b_id', 'date', 'mobilebillercreditaccount', 'made_by', 'amount', 'transaction_type', 'transaction_details', 'user_transaction_number', 'state', 'returned_result'];
+    protected $fillable = ['b_id', 'date', 'mobilebillercreditaccount', 'made_by', 'amount', 'transaction_type',
+        'transaction_details', 'user_transaction_number', 'state', 'returned_result', 'accountstate'];
 
     public function __construct($b_id = null, $date = null, $mobilebillercreditaccount = null, $made_by = null, $amount = null,
                                 $transaction_type = null, TransactionDetail $transaction_details = null, $user_transaction_number = null,
-                                $state = null, $returned_result = null, array $attributes = [])
+                                $state = null, $returned_result = null, $accountstate = null, array $attributes = [])
     {
         parent::__construct($attributes);
         $this->b_id = $b_id;
@@ -34,6 +35,7 @@ class MobileBillerCreditAccountTransaction extends Model
         $this->user_transaction_number = $user_transaction_number;
         $this->state = $state;
         $this->returned_result = $returned_result;
+        $this->accountstate = $accountstate;
     }
 
 

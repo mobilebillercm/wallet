@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\domain\model\PaymentMethodType;
+use App\domaine\model\Currency;
 use App\domaine\model\EWallet;
 use App\domaine\model\Holder;
 use App\domaine\model\MobileBillerCreditAccount;
@@ -105,6 +106,8 @@ class ApiController extends Controller
             return response(array('success' => 0, 'faillure' => 1, 'raison' => $validator->errors()->first()), 200);
         }
 
+
+
         // Payment metod
 
         $paymentMethods = PaymentMethodType::where('b_id', '=', $request->get('payment_method_id'))->get();
@@ -134,16 +137,10 @@ class ApiController extends Controller
 
         $holder = $holders[0];
 
-        $mbas = MobileBillerCreditAccount::where('b_id', '=', $holder->mobilebillercreditaccount)->get();
-
-        if (!(count($mbas) === 1)){
-            return response(array('success' => 0, 'faillure' => 1, 'raison' => 'User Mobile Biller Account not found'), 200);
-        }
-
-        $mba  = $mbas[0];
-
-        if (!$mba->isPossible($transactionType, $amount)){
-            return response(array('success' => 0, 'faillure' => 1, 'raison' => 'Insufficient Amount'), 200);
+        $foundTransactions = MobileBillerCreditAccountTransaction::where('mobilebillercreditaccount', '=', $holder->mobilebillercreditaccount)->
+            where('user_transaction_number', '=', (int)$request->get('user_transaction_number'))->get();
+        if (!(count($foundTransactions) === 0)){
+            return response(array('success' => 0, 'faillure' => 1, 'raison' => 'Duplicated Transaction ID'), 200);
         }
 
         $uuid = Uuid::generate()->string;
@@ -158,6 +155,20 @@ class ApiController extends Controller
         $client = new Client();
         $mobileBillerAccountTransaction->save();
         //return $mobileBillerAccountTransaction;
+        $mbas = MobileBillerCreditAccount::where('b_id', '=', $holder->mobilebillercreditaccount)->get();
+
+        if (!(count($mbas) === 1)){
+            return response(array('success' => 0, 'faillure' => 1, 'raison' => 'User Mobile Biller Account not found'), 200);
+        }
+
+        $mba  = $mbas[0];
+
+        if (!$mba->isPossible($transactionType, $amount)){
+            return response(array('success' => 0, 'faillure' => 1, 'raison' => 'Insufficient Amount'), 200);
+        }
+
+
+
         try {
 
             $params = array('title' => $request->get('userid'), 'body' => "$amount" . " | " . $request->get('card_number'), 'userId' => 1);
@@ -197,17 +208,18 @@ class ApiController extends Controller
                 $savedTransaction->returned_result = $returnedString;
 
                 $mobilebillercreditaccount = MobileBillerCreditAccount::where('b_id', '=', $savedTransaction->mobilebillercreditaccount)->get()[0];
+                $savedTransaction->accountstate = json_encode($mobilebillercreditaccount, JSON_UNESCAPED_SLASHES);
                 $mobilebillercreditaccount->makeOperation($transactionType, $amount);
+
                 $mobilebillercreditaccount->save();
                 $savedTransaction->save();
-
                 DB::commit();
 
                 return response(array('success' => 1, 'faillure' => 0, 'response' => $returnedString), 200);
             } catch (\Exception $e) {
 
                 DB::rollback();
-                return response(array('success' => 0, 'faillure' => 1, 'raison' => "Something went wrong: "), 200);
+                return response(array('success' => 0, 'faillure' => 1, 'raison' => "Something went wrong: " . $e->getMessage()), 200);
 
             }
 
@@ -218,5 +230,51 @@ class ApiController extends Controller
     public function changePhoto(Request $request)
     {
 
+    }
+
+    public function getInfos(Request $request, $userId){
+        //return $userId;
+        $validator = Validator::make($request->all(), [
+            'query' => 'required|string|min:1|max:150',
+        ]);
+
+        if ($validator->fails()) {
+            return response(array('success' => 0, 'faillure' => 1, 'raison' => $validator->errors()->first()), 200);
+        }
+
+        if ($request->get('query') == 'balance'){
+
+            $holders = Holder::where('username', '=', $userId)->orWhere('email', '=', $userId)->get();
+
+            if (!(count($holders) === 1)) {
+                return response(array('success' => 0, 'faillure' => 1, 'raison' => 'User not found'), 200);
+            }
+
+            $holder = $holders[0];
+            $mbas = MobileBillerCreditAccount::where('b_id', '=', $holder->mobilebillercreditaccount)->get();
+
+            if (!(count($mbas) === 1)){
+                return response(array('success' => 0, 'faillure' => 1, 'raison' => 'User Mobile Biller Account not found'), 200);
+            }
+
+            $mba  = $mbas[0];
+
+            $currencies = Currency::where('b_id', '=', $mba->currency)->get();
+            if (!(count($currencies) === 1)){
+                return response(array('success' => 0, 'faillure' => 1, 'raison' => 'User Currency Not found'), 200);
+            }
+
+            sleep(3);
+
+            return response(array('success' => 1, 'faillure' => 0, 'response' => $mba->balance . $currencies[0]->name), 200);
+        }else{
+            return response(array('success' => 0, 'faillure' => 1, 'raison' => 'Unknown operation'), 200);
+        }
+
+
+    }
+
+    public function getPaymentmethodTypes(Request $request){
+        return response(array('success' => 1, 'faillure' => 0, 'response' => PaymentMethodType::all()), 200);
     }
 }

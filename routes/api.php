@@ -19,6 +19,11 @@ Route::middleware('auth:api')->get('/user', function (Request $request) {
 
 Route::post('holders', 'ApiController@createHolder');
 
-Route::post('mobilebillercreditaccounts', 'ApiController@makeOperation');
+Route::post('mobilebillercreditaccounttransactions', 'ApiController@makeOperation');
 
 Route::post('mobilebillercreditaccounts/{id}/photo', 'ApiController@changePhoto');
+
+Route::get('mobilebillercreditaccounts/{id}', 'ApiController@getInfos');
+
+Route::get('paymentmethodtypes', 'ApiController@getPaymentmethodTypes');
+

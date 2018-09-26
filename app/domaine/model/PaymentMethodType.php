@@ -18,10 +18,10 @@ class PaymentMethodType extends Model
     const MOBILE_BILLER_ACCOUNT = "2";
     //const
     protected $table = 'paymentmethodtypes';
-    protected $fillable = ['b_id', 'name', 'description', 'provider', 'icon', 'active', 'api', 'created_by', 'created_at', 'updated_at'];
+    protected $fillable = ['b_id', 'name', 'description', 'provider', 'icon', 'active', 'api', 'type','created_by', 'created_at', 'updated_at'];
 
     public function __construct($b_id = null, $name = null, $description = null, $provider = null, $icon = null,
-                                $active = null, Api $api = null, $created_by = null, array $attributes = [])
+                                $active = null, Api $api = null, $type = null, $created_by = null, array $attributes = [])
     {
         parent::__construct($attributes);
         $this->b_id = $b_id;
@@ -31,6 +31,7 @@ class PaymentMethodType extends Model
         $this->icon = $icon;
         $this->active = $active;
         $this->api = json_encode($api, JSON_UNESCAPED_SLASHES);
+        $this->type = $type;
         $this->created_by = $created_by;
     }
 
