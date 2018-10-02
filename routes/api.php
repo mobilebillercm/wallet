@@ -27,3 +27,12 @@ Route::get('mobilebillercreditaccounts/{id}', 'ApiController@getInfos');
 
 Route::get('paymentmethodtypes', 'ApiController@getPaymentmethodTypes');
 
+Route::post('topups', 'ApiController@makeTopup');
+
+Route::post('transferts', 'ApiController@makeTransfert');
+
+Route::get('transactions/{userid}', 'ApiController@getTransactions');
+
+Route::get('transactions/details/{transactionid}', 'ApiController@getTransactionDetails');
+
+
