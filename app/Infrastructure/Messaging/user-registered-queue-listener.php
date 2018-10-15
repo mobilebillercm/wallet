@@ -29,7 +29,7 @@ use PhpAmqpLib\Connection\AMQPStreamConnection;
 
 
     $channel->exchange_declare(
-        parse_ini_file("global-var-config.ini", true)['EXCHANGES']['USER_REGISTERED_EXCHANGE'],
+        parse_ini_file("global-var-config.ini", true)['EXCHANGES']['REGISTERED_USERS_EXCHANGE'],
         'fanout',
         false,
         true,
@@ -44,7 +44,7 @@ use PhpAmqpLib\Connection\AMQPStreamConnection;
 
     $channel->queue_bind(
         $queue_name,
-        parse_ini_file("global-var-config.ini", true)['EXCHANGES']['USER_REGISTERED_EXCHANGE']
+        parse_ini_file("global-var-config.ini", true)['EXCHANGES']['REGISTERED_USERS_EXCHANGE']
     );
 
     echo " [*] Waiting for registered user to exit press CTRL+C\n";
@@ -57,6 +57,9 @@ use PhpAmqpLib\Connection\AMQPStreamConnection;
 
         $client = new client();
         $token = null;
+
+        echo $msg->body;
+
 
         try {
 
@@ -77,6 +80,9 @@ use PhpAmqpLib\Connection\AMQPStreamConnection;
 
         } catch (BadResponseException $e) {
 
+            //echo $e->getMessage();
+
+
             return $e->getMessage();
 
         }
@@ -86,6 +92,9 @@ use PhpAmqpLib\Connection\AMQPStreamConnection;
 
             $url = parse_ini_file("global-var-config.ini", true)['URLS']['HOST_WALLET'] . '/api/holders';
 
+
+
+            //echo $msg->body;
 
             $data = json_decode($msg->body);
 

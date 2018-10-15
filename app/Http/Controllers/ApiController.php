@@ -10,6 +10,7 @@ use App\domaine\model\MobileBillerCreditAccount;
 use App\domaine\model\MobileBillerCreditAccountTransaction;
 use App\domaine\model\TransactionDetail;
 use App\domaine\model\TransactionType;
+use App\Jobs\ProcessMessages;
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\BadResponseException;
 use Illuminate\Http\Request;
@@ -30,12 +31,13 @@ class ApiController extends Controller
     {
         $body = file_get_contents('php://input');
         $data = json_decode($body, true);
+
         $validator = Validator::make(
             [
                 'userid' => $data['userid'],
                 'firstname' => $data['firstname'],
                 'lastname' => $data['lastname'],
-                'enablement' => $data['enablement'],
+                'enablement' => $data['enablement'] == true ? 1 : 0,
                 'username' => $data['username'],
                 'email' => $data['email'],
                 'phone' => $data['phone'],
@@ -63,7 +65,8 @@ class ApiController extends Controller
             $ewallet = new EWallet($b_id, $data['userid'], '[]');
 
             $uuid = Uuid::generate()->string;
-            $mobileBillerCreditAccount = new MobileBillerCreditAccount($uuid, $uuid, $data['userid'], 0, '', "MOBILEBILLERCM", TRUE, 'b28871c4-bf04-11e8-a52c-ac2b6ee888a2');
+            $mobileBillerCreditAccount = new MobileBillerCreditAccount($uuid, $uuid, $data['userid'], 0, '',
+                "MOBILEBILLERCM", TRUE, 'b28871c4-bf04-11e8-a52c-ac2b6ee888a2');
 
             $ewallet->addAccounts([$uuid]);
 
@@ -83,12 +86,13 @@ class ApiController extends Controller
 
         DB::commit();
 
+
+        ProcessMessages::dispatch(env('USER_MOBILE_CREDIT_ACCOUNT_CREATED_EXCHANGE'), env('RABBIT_MQ_EXCHANGE_TYPE'), json_encode($mobileBillerCreditAccount));
+
+
         return response(array('success' => 1, 'faillure' => 0, 'response' => "Successfully created"), 200);
 
     }
-
-
-
 
     public function makeOperation(Request $request)
     {
@@ -232,7 +236,6 @@ class ApiController extends Controller
 
         $validator = Validator::make($request->all(), [
             'payment_method_id' => 'required|string|min:1', //Moyen pour prelevement peut etre: Mobile Money,  Carte de credit, Cash, MobileBiller credit account
-
         ]);
 
         if ($validator->fails()) {
@@ -278,7 +281,7 @@ class ApiController extends Controller
             if ($validator->fails()) {
                 return response(array('success' => 0, 'faillure' => 1, 'raison' => $validator->errors()->first()), 200);
             }
-        }else{
+        }else if ($paymentMethod->type === 'CASH'){
             $validator = Validator::make($request->all(), [
                 'beneficiary' => 'required|string|min:1|max:150',
                 'userid' => 'required|string|min:1|max:150',
@@ -290,6 +293,8 @@ class ApiController extends Controller
             if ($validator->fails()) {
                 return response(array('success' => 0, 'faillure' => 1, 'raison' => $validator->errors()->first()), 200);
             }
+        }else{
+            return response(array('success' => 0, 'faillure' => 1, 'raison' => "Payment method not fount"), 200);
         }
 
         $api = $paymentMethod->api;
@@ -342,14 +347,6 @@ class ApiController extends Controller
 
         $card_hoder = ($request->get('card_holder') == null)? $holder->firstname . ' ' . $holder->lastname:$request->get('card_holder');
 
-        $mobileBillerAccountTransaction = new MobileBillerCreditAccountTransaction($uuid, $now, $holder->mobilebillercreditaccount, $card_hoder,
-            $amount, $transactionType->b_id, null, $request->get('user_transaction_number'), MobileBillerCreditAccountTransaction::PENDING, '');
-
-        $failed = false;
-        $returnedString = '';
-
-        $client = new Client();
-        $mobileBillerAccountTransaction->save();
 
         //8- Compte du beneficiaire
         $mbas = MobileBillerCreditAccount::where('b_id', '=', $beneficiary->mobilebillercreditaccount)->get();
@@ -365,10 +362,47 @@ class ApiController extends Controller
         }
 
 
+        $mobileBillerAccountTransaction = new MobileBillerCreditAccountTransaction($uuid, $now, $holder->mobilebillercreditaccount, $card_hoder,
+            $amount, $transactionType->b_id, null, $request->get('user_transaction_number'), MobileBillerCreditAccountTransaction::PENDING, '');
+
+        $failed = false;
+        $returnedString = '';
+
+        $mobileBillerAccountTransaction->save();
+
+
+
+        $client = new Client();
+
+
+
+
         //9- Transfere de fond
+
+
+
         try {
 
-            $params = array('title' => $request->get('userid'), 'body' => "$amount" . " | " . $request->get('card_number'), 'userId' => 1);
+            if ($paymentMethod->type === 'CASH'){
+                $holderMobileBillerAccounts = MobileBillerCreditAccount::where('b_id', '=', $holder->mobilebillercreditaccount)->get();
+
+                if (!(count($holderMobileBillerAccounts) === 1)){
+                    //return response(array('success' => 0, 'faillure' => 1, 'raison' => 'User Mobile Biller Account not found'), 200);
+                    $failed = true;
+                    $returnedString = 'No account found';
+                }else{
+
+                    $holderMobileBillerAccount  = $holderMobileBillerAccounts[0];
+
+                    if (!$holderMobileBillerAccount->isPossible($transactionType, $amount)){
+                        return response(array('success' => 0, 'faillure' => 1, 'raison' => 'Insufficient Amount'), 200);
+                    }
+                }
+
+
+            }
+
+           /* $params = array('title' => $request->get('userid'), 'body' => "$amount" . " | " . $request->get('card_number'), 'userId' => 1);
 
             $response = $client->post($url, [
                 'headers' => [
@@ -380,7 +414,7 @@ class ApiController extends Controller
             //return (string)$response->getBody();
             $returnedString = (string)$response->getBody();
 
-            $failed = false;
+            $failed = false;*/
 
         } catch (BadResponseException $e) {
             $failed = true;
@@ -434,6 +468,245 @@ class ApiController extends Controller
 
 
         }
+    }
+
+    public function makeCashTopup(Request $request){
+
+        //1-  Payment metod
+
+        $validator = Validator::make($request->all(), [
+            'beneficiary' => 'required|string|min:1|max:150',
+            'password' => 'required|string|min:1|max:250',
+            'userid' => 'required|string|min:1|max:150',
+            'amount' => 'required|numeric|min:1',
+            'user_transaction_number' => 'required|numeric',
+        ]);
+
+        if ($validator->fails()) {
+            return response(array('success' => 0, 'faillure' => 1, 'raison' => $validator->errors()->first()), 200);
+        }
+
+        //4- Users (Celui qui effectue l'operation)
+
+        $holders = Holder::where('b_id', '=', $request->get('userid'))->get();
+
+        if (!(count($holders) === 1)) {
+            return response(array('success' => 0, 'faillure' => 1, 'raison' => 'User not found'), 200);
+        }
+
+
+        $holder = $holders[0];
+
+        $client = new Client();
+
+        $token = null;
+
+        try {
+
+
+            $tokenUrl = env('HOST_IDENTITY_AND_ACCESS') . '/oauth/token';
+
+
+            $tokenData = $client->post($tokenUrl, [
+                'form_params' => [
+                    'grant_type' => 'client_credentials',
+                    'client_id' => env('IDENTITY_AND_ACCESS_CLIENT_ID'),
+                    'client_secret' => env('IDENTITY_AND_ACCESS_CLIENT_SECRET'),
+                ],
+            ]);
+
+            $token = json_decode((string)$tokenData->getBody());
+
+            $url = env('HOST_IDENTITY_AND_ACCESS').'/api/users/'.$holder->email.'/verify';
+
+            //return response(array('success'=>0, 'faillure'=>1, 'raison'=>'Authentication Failed 2' . json_encode($request->all())),200);
+            $res = $client->post($url, [
+                'headers' => [
+                    'Authorization' => '' . $token->access_token,
+                ],
+                'form_params'=>$request->all()
+            ]);
+
+
+            $isjson = $this->is_JSON((string)$res->getBody());
+
+            if(!($isjson == 0)){
+
+                return response(array('success'=>0, 'faillure'=>1, 'raison'=>'Authentication Failed 1'),200);
+            }
+
+            $login = json_decode( (string) $res->getBody());
+
+
+            if($login->success === 0 and $login->faillure === 1){
+
+                return response(array('success'=>0, 'faillure'=>1, 'raison'=>'Authentication Failed 2' . $login->raison),200);
+
+            }
+
+
+        } catch (BadResponseException $e) {
+
+            return response(array('success'=>0, 'faillure'=>1, 'raison'=>'Authentication Failed 3 ' . $e->getMessage()),200);
+
+        }
+
+        //2- Amount
+        $amount = (float)$request->get('amount');
+
+        // 3- Type de transaction
+        $transactionTypes = TransactionType::where('name', '=', 'TOPUP')->get();
+        if (!(count($transactionTypes) === 1)) {
+            return response(array('success' => 0, 'faillure' => 1, 'raison' => 'Transaction Type not found'), 200);
+        }
+
+        $transactionType = $transactionTypes[0];
+
+        $transactionTypesBene = TransactionType::where('name', '=', 'DEPOSIT')->get();
+        if (!(count($transactionTypesBene) === 1)) {
+            return response(array('success' => 0, 'faillure' => 1, 'raison' => 'Transaction Type DEPOSIT not found'), 200);
+        }
+
+        $transactionTypeBene = $transactionTypesBene[0];
+
+
+
+        if (!($request->get('userid') === env('SUPER_ADMINISTRATOR_ID'))) {
+            return response(array('success' => 0, 'faillure' => 1, 'raison' => 'User not allowed'), 200);
+        }
+
+        if (!$holder->isEnable()){
+            return response(array('success' => 0, 'faillure' => 1, 'raison' => 'Holder disabled'), 200);
+        }
+
+        //5- Beneficiaire
+
+        $beneficiaries = Holder::where('b_id', '=', $request->get('beneficiary'))->get();
+
+        if (!(count($beneficiaries) === 1)) {
+            return response(array('success' => 0, 'faillure' => 1, 'raison' => 'Beneficiary not found'), 200);
+        }
+
+        $beneficiary = $beneficiaries[0];
+
+        if (!$beneficiary->isEnable()){
+            return response(array('success' => 0, 'faillure' => 1, 'raison' => 'Holder disabled'), 200);
+        }
+
+        //6- user_transaction_number verification de la duplication de numero de transaction
+        //7- Preparation de la transaction en vue d'empecher le replay de la numerotation des transaction par le client
+
+        $foundTransactions = MobileBillerCreditAccountTransaction::where('mobilebillercreditaccount', '=', $holder->mobilebillercreditaccount)->
+        where('user_transaction_number', '=', (int)$request->get('user_transaction_number'))->get();
+        if (!(count($foundTransactions) === 0)){
+            return response(array('success' => 0, 'faillure' => 1, 'raison' => 'Duplicated Transaction ID'), 200);
+        }
+
+        $foundTransactionsBene = MobileBillerCreditAccountTransaction::where('mobilebillercreditaccount', '=', $beneficiary->mobilebillercreditaccount)->
+        where('user_transaction_number', '=', (int)$request->get('user_transaction_number'))->get();
+        if (!(count($foundTransactionsBene) === 0)){
+            return response(array('success' => 0, 'faillure' => 1, 'raison' => 'Duplicated Transaction ID For Beneficiary'), 200);
+        }
+
+
+        $uuid = Uuid::generate()->string;
+        $now = date("Y-m-d H:i:s");
+        $uuidBene = Uuid::generate()->string;
+
+        //8- Compte du beneficiaire
+        $mbasHolder = MobileBillerCreditAccount::where('b_id', '=', $holder->mobilebillercreditaccount)->get();
+
+        if (!(count($mbasHolder) === 1)){
+            return response(array('success' => 0, 'faillure' => 1, 'raison' => 'User Mobile Biller Account not found'), 200);
+        }
+
+        $mbaHolder  = $mbasHolder[0];
+
+
+        //8- Compte du beneficiaire
+        $mbas = MobileBillerCreditAccount::where('b_id', '=', $beneficiary->mobilebillercreditaccount)->get();
+
+        if (!(count($mbas) === 1)){
+            return response(array('success' => 0, 'faillure' => 1, 'raison' => 'User Mobile Biller Account not found'), 200);
+        }
+
+        $mba  = $mbas[0];
+
+        if (!$mba->isActive()){
+            return response(array('success' => 0, 'faillure' => 1, 'raison' => 'Beneficiary account disabled'), 200);
+        }
+
+        if (!$mba->isPossible($transactionType, $amount)){
+            return response(array('success' => 0, 'faillure' => 1, 'raison' => 'Insufficient Amount'), 200);
+        }
+
+
+
+        $mobileBillerAccountTransaction = new MobileBillerCreditAccountTransaction($uuid, $now, $holder->mobilebillercreditaccount, $holder->firstname.' '.$holder->lastname,
+            $amount, $transactionType->b_id, null, $request->get('user_transaction_number'), MobileBillerCreditAccountTransaction::PENDING, '');
+
+        $mobileBillerAccountTransactionBene = new MobileBillerCreditAccountTransaction($uuidBene, $now, $beneficiary->mobilebillercreditaccount, $holder->firstname.' '.$holder->lastname,
+            $amount, $transactionTypeBene->b_id, null, $request->get('user_transaction_number'), MobileBillerCreditAccountTransaction::PENDING, '');
+
+        $failed = false;
+        $returnedString = '';
+
+        $mobileBillerAccountTransaction->save();
+        $mobileBillerAccountTransactionBene->save();
+
+
+        //9- Transfere de fond
+
+        $paymentMethods = PaymentMethodType::where('name', '=', 'CASH')->get();
+        if (!(count($paymentMethods) === 1)) {
+            return response(array('success' => 0, 'faillure' => 1, 'raison' => 'Payment method not found'), 200);
+        }
+
+        try{
+
+                DB::beginTransaction();
+
+                $transactionDetails = new TransactionDetail($holder->b_id,$holder->mobilebillercreditaccount,$holder->firstname.' '.$holder->lastname,
+                    null, $paymentMethods[0]->b_id, $beneficiary->b_id, $transactionType->b_id);
+
+                $transactionDetailsBene = new TransactionDetail($holder->b_id,$holder->mobilebillercreditaccount,$holder->firstname.' '.$holder->lastname,
+                null, $paymentMethods[0]->b_id, $beneficiary->b_id, $transactionType->b_id);
+
+                $savedTransaction = MobileBillerCreditAccountTransaction::where('b_id', '=', $uuid)->get()[0];
+
+            $savedTransactionBene = MobileBillerCreditAccountTransaction::where('b_id', '=', $uuidBene)->get()[0];
+
+                //12- Succes du transfere.
+
+                $savedTransaction->state = MobileBillerCreditAccountTransaction::SUCCESS;
+                $savedTransactionBene->state = MobileBillerCreditAccountTransaction::SUCCESS;
+                $savedTransaction->returned_result = '';
+                $savedTransactionBene->returned_result = '';
+
+                $savedTransaction->accountstate = json_encode($mbaHolder, JSON_UNESCAPED_SLASHES);
+                $savedTransactionBene->accountstate = json_encode($mba, JSON_UNESCAPED_SLASHES);
+                $savedTransaction->transaction_details = json_encode($transactionDetails, JSON_UNESCAPED_SLASHES);
+                $savedTransactionBene->transaction_details = json_encode($transactionDetailsBene, JSON_UNESCAPED_SLASHES);
+                $mba->makeOperation($transactionType, $amount);
+                $mba->save();
+                $savedTransaction->save();
+                $savedTransactionBene->save();
+                DB::commit();
+
+            } catch (\Exception $e) {
+
+                DB::rollback();
+                return response(array('success' => 0, 'faillure' => 1, 'raison' => "Something went wrong: " . $e->getMessage()), 200);
+
+            }
+
+
+
+        ProcessMessages::dispatch(env('ACCOUNT_TOPUPPED_WITH_CASH_EXCHANGE'), env('RABBIT_MQ_EXCHANGE_TYPE'),
+            json_encode(array('mobilebillercreditaccount'=>$mba, 'transactions'=>[$savedTransaction, $savedTransactionBene])));
+
+        return response(array('success' => 1, 'faillure' => 0, 'response' => 'Recharge effectue avec success'), 200);
+
     }
 
     public function changePhoto(Request $request)
@@ -493,14 +766,15 @@ class ApiController extends Controller
     public function makeTransfert(Request $request){
         $validator = Validator::make($request->all(), [
             'userid' => 'required|string|min:1|max:150',
+            'password' => 'required|string|min:6|max:150',
+            'tenantid' => 'required|string|min:1|max:150',
             'beneficiary' => 'required|string|min:1|max:150',
             'amount' => 'required|numeric|min:100',
             'user_transaction_number' => 'required|numeric',
         ]);
 
         if ($validator->fails()) {
-            return Redirect::back()->with('message',array('receiveResultStatusCode' => 200,
-                'result'=>array('success'=>0, 'faillure'=>1, 'raison'=>$validator->errors()->first())));
+            return response(array('success' => 0, 'faillure' => 1, 'raison' => $validator->errors()->first()), 200);
         }
 
         //1- Amount
@@ -516,6 +790,64 @@ class ApiController extends Controller
 
         $sourceHolder = $sourceHolders[0];
 
+        if (!$sourceHolder->isEnable()){
+            return response(array('success' => 0, 'faillure' => 1, 'raison' => 'User disabled'), 200);
+        }
+
+        $client = new Client();
+
+        $token = null;
+
+        try {
+
+
+            $tokenUrl = env('HOST_IDENTITY_AND_ACCESS') . '/oauth/token';
+
+
+            $tokenData = $client->post($tokenUrl, [
+                'form_params' => [
+                    'grant_type' => 'client_credentials',
+                    'client_id' => env('IDENTITY_AND_ACCESS_CLIENT_ID'),
+                    'client_secret' => env('IDENTITY_AND_ACCESS_CLIENT_SECRET'),
+                ],
+            ]);
+
+            $token = json_decode((string)$tokenData->getBody());
+
+            $url = env('HOST_IDENTITY_AND_ACCESS').'/api/users/'.$sourceHolder->email.'/verify';
+
+            //return response(array('success'=>0, 'faillure'=>1, 'raison'=>'Authentication Failed 2' . json_encode($request->all())),200);
+            $res = $client->post($url, [
+                'headers' => [
+                    'Authorization' => '' . $token->access_token,
+                ],
+                'form_params'=>$request->all()
+            ]);
+
+
+            $isjson = $this->is_JSON((string)$res->getBody());
+
+            if(!($isjson == 0)){
+
+                return response(array('success'=>0, 'faillure'=>1, 'raison'=>'Authentication Failed 1'),200);
+            }
+
+            $login = json_decode( (string) $res->getBody());
+
+
+            if($login->success === 0 and $login->faillure === 1){
+
+                return response(array('success'=>0, 'faillure'=>1, 'raison'=>'Authentication Failed 2' . $login->raison),200);
+
+            }
+
+
+        } catch (BadResponseException $e) {
+
+            return response(array('success'=>0, 'faillure'=>1, 'raison'=>'Authentication Failed 3 ' . $e->getMessage()),200);
+
+        }
+
 
         //3- Compte source
         $sourceAcounts = MobileBillerCreditAccount::where('b_id', '=', $sourceHolder->mobilebillercreditaccount)->get();
@@ -526,6 +858,10 @@ class ApiController extends Controller
 
         $sourceAcount  = $sourceAcounts[0];
 
+        if (!$sourceAcount->isActive()){
+            return response(array('success' => 0, 'faillure' => 1, 'raison' => 'User Mobile Biller Account not Active'), 200);
+        }
+
         //4- user_transaction_number verification de la duplication de numero de transaction
 
         $foundTransactions = MobileBillerCreditAccountTransaction::where('mobilebillercreditaccount', '=', $sourceHolder->mobilebillercreditaccount)->
@@ -533,8 +869,6 @@ class ApiController extends Controller
         if (!(count($foundTransactions) === 0)){
             return response(array('success' => 0, 'faillure' => 1, 'raison' => 'Duplicated Transaction ID'), 200);
         }
-
-
 
         //5- Destination holder (Celui qui beneficie)
 
@@ -546,6 +880,10 @@ class ApiController extends Controller
 
         $destinationHolder = $destinationHolders[0];
 
+        if (!$destinationHolder->isEnable()){
+            return response(array('success' => 0, 'faillure' => 1, 'raison' => 'Beneficiary disabled'), 200);
+        }
+
         //6- Compte destination
         $destinationAcounts = MobileBillerCreditAccount::where('b_id', '=', $destinationHolder->mobilebillercreditaccount)->get();
 
@@ -556,6 +894,9 @@ class ApiController extends Controller
         $destinationAcount  = $destinationAcounts[0];
 
 
+        if (!$destinationAcount->isActive()){
+            return response(array('success' => 0, 'faillure' => 1, 'raison' => 'Beneficiary Mobile Biller Account not Active'), 200);
+        }
 
         //7- Verification de la disponibilite
 
@@ -599,12 +940,16 @@ class ApiController extends Controller
         $returnedString = '';
         $mobileBillerAccountTransaction->save();
 
+        $savedTransaction = null;
+        $mobileBillerAccountTransaction_dest = null;
+
         try {
             //19- Debut de la transaction
 
             DB::beginTransaction();
 
             $src_json = json_encode($sourceAcount, JSON_UNESCAPED_SLASHES); //etat du compte source avant toute operation de debit.
+            $dest_json = json_encode($destinationAcount, JSON_UNESCAPED_SLASHES);
             $sourceAcount->makeOperation($srcTransactionType, $amount);
             $destinationAcount->makeOperation($destTransactionType, $amount);
             $sourceAcount->save();
@@ -618,20 +963,27 @@ class ApiController extends Controller
             //$savedTransaction->transaction_details = json_encode($transactionDetails, JSON_UNESCAPED_SLASHES);
             $savedTransaction->save();
 
+
             $mobileBillerAccountTransaction_dest = new MobileBillerCreditAccountTransaction(Uuid::generate()->string, date("Y-m-d H:i:s"), $destinationHolder->mobilebillercreditaccount,
-                $destinationHolder->firstname.'  ' . $destinationHolder->lastname,
-                $amount, $destTransactionType->b_id, $transactionDetails , time(), MobileBillerCreditAccountTransaction::SUCCESS, 'Transfert effectue avec succes.');
+
+            $sourceHolder->firstname.'  ' . $sourceHolder->lastname,
+                $amount, $destTransactionType->b_id, $transactionDetails , time(), MobileBillerCreditAccountTransaction::SUCCESS, 'Transfert effectue avec succes.', $dest_json);
             $mobileBillerAccountTransaction_dest->save();
 
-            DB::commit();
-
-            return response(array('success' => 1, 'faillure' => 0, 'response' => 'Transfert effectue avec succes.'), 200);
         } catch (\Exception $e) {
 
             DB::rollback();
             return response(array('success' => 0, 'faillure' => 1, 'raison' => "Something went wrong: " . $e->getMessage()), 200);
 
         }
+
+        DB::commit();
+
+        ProcessMessages::dispatch(env('TRANSFERE_OPERATION_EXCHANGE'), env('RABBIT_MQ_EXCHANGE_TYPE'),
+            json_encode(array('sourceaccount'=>$sourceAcount, 'destinationaccount'=>$destinationAcount,
+                'sourcetransaction'=>$savedTransaction, 'destinationtransaction'=>$mobileBillerAccountTransaction_dest)));
+
+        return response(array('success' => 1, 'faillure' => 0, 'response' => 'Transfert effectue avec succes.'), 200);
 
     }
 

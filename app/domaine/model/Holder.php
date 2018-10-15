@@ -31,5 +31,9 @@ class Holder extends Model
         $this->mobilebillercreditaccount = $mobilebillercreditaccount;
     }
 
+    public  function isEnable(){
+        return $this->enablement == 1;
+    }
+
 
 }

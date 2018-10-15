@@ -48,4 +48,9 @@ class MobileBillerCreditAccount extends Model
 
         return true;
     }
+
+
+    public  function isActive(){
+        return $this->active == 1;
+    }
 }

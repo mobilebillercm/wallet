@@ -13,7 +13,9 @@
         "laravel/framework": "5.7.*",
         "laravel/passport": "^7.0",
         "laravel/tinker": "^1.0",
-        "webpatser/laravel-uuid": "^3.0"
+        "webpatser/laravel-uuid": "^3.0",
+        "php-amqplib/php-amqplib": ">=2.6.1"
+
     },
     "require-dev": {
         "beyondcode/laravel-dump-server": "^1.0",

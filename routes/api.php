@@ -29,6 +29,8 @@ Route::get('paymentmethodtypes', 'ApiController@getPaymentmethodTypes');
 
 Route::post('topups', 'ApiController@makeTopup');
 
+Route::post('cash-topups', 'ApiController@makeCashTopup');
+
 Route::post('transferts', 'ApiController@makeTransfert');
 
 Route::get('transactions/{userid}', 'ApiController@getTransactions');

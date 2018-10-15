@@ -11,6 +11,7 @@ return array(
     '667aeda72477189d0494fecd327c3641' => $vendorDir . '/symfony/var-dumper/Resources/functions/dump.php',
     '320cde22f66dd4f5d3fd621d3e88b98f' => $vendorDir . '/symfony/polyfill-ctype/bootstrap.php',
     '2c102faa651ef8ea5874edb585946bce' => $vendorDir . '/swiftmailer/swiftmailer/lib/swift_required.php',
+    '538ca81a9a966a6716601ecf48f4eaef' => $vendorDir . '/opis/closure/functions.php',
     'cf97c57bfe0f23854afd2f3818abb7a0' => $vendorDir . '/zendframework/zend-diactoros/src/functions/create_uploaded_file.php',
     '9bf37a3d0dad93e29cb4e1b1bfab04e9' => $vendorDir . '/zendframework/zend-diactoros/src/functions/marshal_headers_from_sapi.php',
     'ce70dccb4bcc2efc6e94d2ee526e6972' => $vendorDir . '/zendframework/zend-diactoros/src/functions/marshal_method_from_sapi.php',
