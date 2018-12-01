@@ -13,28 +13,51 @@ use Illuminate\Http\Request;
 |
 */
 
-Route::middleware('auth:api')->get('/user', function (Request $request) {
-    return $request->user();
-});
 
-Route::post('holders', 'ApiController@createHolder');
 
-Route::post('mobilebillercreditaccounttransactions', 'ApiController@makeOperation');
+Route::post('holders', 'ApiController@createHolder')->middleware('rabbitmq.client');
 
-Route::post('mobilebillercreditaccounts/{id}/photo', 'ApiController@changePhoto');
+Route::post('payements-from-mobile-biller-credit-account', 'ApiController@makePayementFromMobileBillerCreditAccount')->middleware('rabbitmq.client');
 
-Route::get('mobilebillercreditaccounts/{id}', 'ApiController@getInfos');
+Route::post('mobilebillercreditaccounttransactions', 'ApiController@makeOperation')->middleware('token.verification');
+
+Route::post('mobilebillercreditaccounts/{id}/photo', 'ApiController@changePhoto')->middleware('token.verification');
+
+Route::get('mobilebillercreditaccounts/{id}', 'ApiController@getInfos')->middleware('token.verification');
 
 Route::get('paymentmethodtypes', 'ApiController@getPaymentmethodTypes');
 
-Route::post('topups', 'ApiController@makeTopup');
+Route::post('topups', 'ApiController@makeTopup')->middleware('token.verification');
 
-Route::post('cash-topups', 'ApiController@makeCashTopup');
+Route::post('cash-topups', 'ApiController@makeCashTopup')->middleware('token.verification');
 
-Route::post('transferts', 'ApiController@makeTransfert');
+Route::post('transferts', 'ApiController@makeTransfert')->middleware('token.verification');
 
-Route::get('transactions/{userid}', 'ApiController@getTransactions');
+Route::get('transactions/{userid}', 'ApiController@getTransactions')->middleware('token.verification');
 
-Route::get('transactions/details/{transactionid}', 'ApiController@getTransactionDetails');
+Route::get('transactions/details/{transactionid}', 'ApiController@getTransactionDetails')->middleware('token.verification');
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Route::middleware('auth:api')->get('/user', function (Request $request) {
+    return $request->user();
+});

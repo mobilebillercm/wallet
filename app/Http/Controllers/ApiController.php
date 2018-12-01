@@ -709,6 +709,183 @@ class ApiController extends Controller
 
     }
 
+    public function makePayementFromMobileBillerCreditAccount(){
+
+
+
+
+        $body = file_get_contents('php://input');
+
+        $data = json_decode($body, true);
+
+
+
+
+        $validator = Validator::make($data,
+            [
+                'b_id' => 'required|string|min:1|max:150',
+                'user_payment_number' => 'required|string|min:1|max:150',
+                'userid' => 'required|string|min:1|max:150',
+                'methodtype' => 'required|string|min:1',
+                'price' => 'required|string|min:1',
+                'service' => 'required|string|min:1|max:150',
+                'mobilebillercreditaccount' => 'required|string|min:1|max:150',
+                'user' => 'required|string|min:1',
+                'beneficiary' => 'required|string|min:1|max:150',
+                'status' => 'required|string|min:1|max:50',
+                'tries' => 'required|integer',
+            ]
+        );
+
+
+        if($validator->fails()){
+
+            return response(array('success' => 0, 'faillure' => 1, 'raison' => $validator->errors()->first()), 200);
+        }
+
+        //return $validator->errors()->first();
+
+
+
+
+        $payementMethods = PaymentMethodType::where('name', '=', 'MOBILEBILLERCM')->get();
+
+        //return $payementMethods;
+
+
+        $price = $data['price'];
+        $priceArray = json_decode($price, true);
+        $amount = $priceArray['amount']['value'];
+
+
+        $transactionTypes = TransactionType::where('name', '=', 'PAYMENT')->get();
+        $mbas = MobileBillerCreditAccount::where('b_id', '=', $data['mobilebillercreditaccount'])->get();
+
+        //return count($mbas);
+
+        //return $data['mobilebillercreditaccount'];
+
+
+        //return $validator->errors()->first();
+
+        if ($validator->fails() or !(count($payementMethods) === 1) or !(count($transactionTypes) === 1) or !(count($mbas) === 1)){
+
+            ProcessMessages::dispatch(env('PAYMENT_WITH_MOBILE_BILLER_ACCOUNT_FAILED_EXCHANGE'), env('RABBIT_MQ_EXCHANGE_TYPE'),
+                json_encode(array('message'=>'Invalid or Inconsistent data', 'paymentid'=>$data['b_id'])));
+
+            return response(array('success' => 0, 'faillure' => 1, 'raison' => 'Invalid or Inconsistent data'), 200);
+        }else{
+
+            $payementMethod = $payementMethods[0];
+            $transactionType = $transactionTypes[0];
+            $mba  = $mbas[0];
+        }
+
+
+
+
+
+        if (!$mba->isActive()){
+
+            ProcessMessages::dispatch(env('PAYMENT_WITH_MOBILE_BILLER_ACCOUNT_FAILED_EXCHANGE'), env('RABBIT_MQ_EXCHANGE_TYPE'),
+                json_encode(array('message'=>'Beneficiary account disabled', 'paymentid'=>$data['b_id'])));
+
+            return response(array('success' => 0, 'faillure' => 1, 'raison' => 'Beneficiary account disabled'), 200);
+        }
+
+
+
+        if (!$mba->isPossible($transactionType, $amount)){
+
+            ProcessMessages::dispatch(env('PAYMENT_WITH_MOBILE_BILLER_ACCOUNT_FAILED_EXCHANGE'), env('RABBIT_MQ_EXCHANGE_TYPE'),
+                json_encode(array('message'=>'Insufficient funds', 'paymentid'=>$data['b_id'])));
+
+            return response(array('success' => 0, 'faillure' => 1, 'raison' => 'Insufficient Amount'), 200);
+        }
+
+
+
+        $foundTransactionsBene = MobileBillerCreditAccountTransaction::where('mobilebillercreditaccount', '=',  $data['mobilebillercreditaccount'])->
+        where('user_transaction_number', '=', $data['user_payment_number'])->get();
+
+
+
+
+        if (!(count($foundTransactionsBene) === 0)){
+
+            ProcessMessages::dispatch(env('PAYMENT_WITH_MOBILE_BILLER_ACCOUNT_FAILED_EXCHANGE'), env('RABBIT_MQ_EXCHANGE_TYPE'),
+                json_encode(array('message'=>'Duplicated transaction ID For Beneficiary', 'paymentid'=>$data['b_id'])));
+            return response(array('success' => 0, 'faillure' => 1, 'raison' => 'Duplicated transaction ID For Beneficiary'), 200);
+        }
+
+
+        //return $data['mobilebillercreditaccount'];
+
+
+
+        $now = date("Y-m-d H:i:s");
+        $uuidBene = Uuid::generate()->string;
+
+
+        $user = $data['user'];
+
+        $userArray = json_decode($user, true);
+
+        //return $userArray['firstname'];
+
+        $mobileBillerAccountTransaction = new MobileBillerCreditAccountTransaction($uuidBene, $now, $data['mobilebillercreditaccount'], $userArray['firstname'].' '.$userArray['lastname'],
+            $amount, $transactionType->b_id, null, $data['user_payment_number'], MobileBillerCreditAccountTransaction::PENDING, '');
+
+        //return $mobileBillerAccountTransaction;
+
+        //return $mobileBillerAccountTransaction;
+
+        $mobileBillerAccountTransaction->save();
+
+
+        try{
+
+            DB::beginTransaction();
+
+
+
+            $transactionDetailsBene = new TransactionDetail($data['userid'], $data['mobilebillercreditaccount'],$userArray['firstname'].' '.$userArray['lastname'],
+                null, $payementMethod->b_id, $data['userid'], $transactionType->b_id);
+
+            //return   json_encode($transactionDetailsBene);
+
+            $savedTransactionBene = MobileBillerCreditAccountTransaction::where('b_id', '=', $uuidBene)->get()[0];
+
+            //12- Succes du transfere.
+            $savedTransactionBene->state = MobileBillerCreditAccountTransaction::SUCCESS;
+            $savedTransactionBene->returned_result = '';
+
+            $savedTransactionBene->accountstate = json_encode($mba, JSON_UNESCAPED_SLASHES);
+            $savedTransactionBene->transaction_details = json_encode($transactionDetailsBene, JSON_UNESCAPED_SLASHES);
+            $mba->makeOperation($transactionType, $amount);
+
+            //return json_encode($mba);
+
+            $mba->save();
+            $savedTransactionBene->save();
+            DB::commit();
+
+        } catch (\Exception $e) {
+
+            DB::rollback();
+            return response(array('success' => 0, 'faillure' => 1, 'raison' => "Something went wrong: " . $e->getMessage()), 200);
+
+        }
+
+
+
+        ProcessMessages::dispatch(env('PAYMENT_WITH_MOBILE_BILLER_ACCOUNT_ACCEPTED_EXCHANGE'), env('RABBIT_MQ_EXCHANGE_TYPE'),
+            json_encode(array('message'=>'SUCCESS','mobilebillercreditaccount'=>$mba, 'transaction'=>$savedTransactionBene, 'paymentid'=>$data['b_id'])));
+
+        return response(array('success' => 1, 'faillure' => 0, 'response' => 'Recharge effectue avec success'), 200);
+
+    }
+
     public function changePhoto(Request $request)
     {
 
@@ -726,7 +903,7 @@ class ApiController extends Controller
 
         if ($request->get('query') == 'balance'){
 
-            $holders = Holder::where('username', '=', $userId)->orWhere('email', '=', $userId)->orWhere('b_id', '=', $userId)->get();
+            $holders = Holder::where('b_id', '=', $userId)->get();
 
             if (!(count($holders) === 1)) {
                 return response(array('success' => 0, 'faillure' => 1, 'raison' => 'User not found'), 200);
@@ -764,6 +941,7 @@ class ApiController extends Controller
     }
 
     public function makeTransfert(Request $request){
+
         $validator = Validator::make($request->all(), [
             'userid' => 'required|string|min:1|max:150',
             'password' => 'required|string|min:6|max:150',
